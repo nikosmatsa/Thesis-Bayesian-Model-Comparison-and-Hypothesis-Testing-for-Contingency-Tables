@@ -1,0 +1,1240 @@
+#==================================================================
+#                 THESIS OF NIKOS MATSAVELAS 
+#==================================================================
+#          (BAYESIAN MODEL COMPARISON AND HYPOTHESIS 
+#              TESTING IN CONTINGENCY TABLES )
+#==================================================================
+library(LearnBayes)
+library(BayesFactor)
+library(tidyverse)
+library(dplyr)
+library(coda)
+library(MASS)
+library(rstan)
+library(bridgesampling)
+library(rstanarm)
+library(brms)
+library(bayesplot)
+library(ISwR)
+library(loo)
+library(nnet)
+library(MCMCpack)
+library(raster)
+library(StanHeaders)
+
+#==================================================================
+#                         CHAPTER    1  
+#================================================================== 
+# models
+stancodeH0 <- 'data {
+  int<lower=0> N;
+  vector[N] y;
+}
+parameters {
+  real mu;
+  real<lower=0> sigma;
+} model {
+    y     ~  normal(mu, sigma);
+    mu    ~  normal(9,1);
+    sigma ~  cauchy(0,1);
+}'
+points = c(8,13,20,11,8,9,20,5,18,9,9,7,11,13,11,14,11,12,11,4,4,17,15,22,11,8,22)
+
+data_list = list(y = points,  
+                 N = length(points))
+stanmodelH0 = stan_model(model_code = stancodeH0, model_name="stanmodel")
+stanfitH0   = sampling(stanmodelH0,
+                       data   = data_list,
+                       iter   = 20000, 
+                       warmup = 1000,
+                       chains = 4,
+                       cores  = 1,
+                       seed   = 12345,
+                       control = list(adapt_delta = .99))
+print(stanfitH0)
+plot(stanfitH0)
+
+stancodeH1 <- '
+data {
+  int<lower=0> N;
+  vector[N] y;
+}
+parameters {
+  real mu;
+  real<lower=0> sigma;
+}model{
+    y     ~  normal(mu, sigma);
+    mu    ~  normal(11,1);
+    sigma ~  cauchy(0,1);
+}
+'
+# compile models
+
+stanmodelH1 = stan_model(model_code = stancodeH1, model_name="stanmodel")
+stanfitH1   = sampling(stanmodelH1,
+                       data    = data_list,
+                       iter    = 20000,
+                       warmup  = 1000,
+                       chains  = 4, 
+                       cores   = 1,
+                       seed    = 12345,
+                       control = list(adapt_delta = .99))
+
+print(stanfitH1)
+plot(stanfitH1)
+H0 = bridge_sampler(stanfitH0, silent = TRUE)
+H1 = bridge_sampler(stanfitH1, silent = TRUE)
+print(H0)
+print(H1)
+# compute percentage errors
+H0.error <- error_measures(H0)$percentage
+H1.error <- error_measures(H1)$percentage
+print(H0.error)
+print(H1.error)
+# compute Bayes factor
+BF01=bayes_factor(H0,H1,log=TRUE)
+print(BF01)
+
+BF10=bayes_factor(H1,H0,log=TRUE)
+print(BF10)
+
+
+
+
+# sloukas points 2018-19 comparison of hypotheses 
+# 27 games of Euroleague Regular Season 2018-19
+points = c(8,13,20,11,8,9,20,5,18,9,9,7,11,13,11,14,11,12,11,4,4,17,15,22,11,8,22)
+length(points)
+mean(points)
+var(points)
+sd(points)
+#  Ho : m<= 10 , H1 : m>10
+# prior means from N(9,5) according to Euroleague 
+# history from 2008-9 season until 2017-2018 season
+pmean = 9; pvar= 25
+probH = pnorm(10,pmean,sqrt(pvar))
+probA = 1 - probH
+prior.odds = probH/probA
+prior.odds
+ybar = mean(points)
+sigma2 = 5^2/length(points);sigma2
+post.precision = (1/sigma2)+(1/pvar)
+post.var=1/post.precision
+# posterior density 
+post.mean = (ybar/sigma2+pmean/pvar)/post.precision
+c(post.mean,sqrt(post.var))
+# odds of the null hypothesis 
+post.odds = pnorm(10,post.mean,sqrt(post.var)) / (1-pnorm(10,post.mean,sqrt(post.var)))
+post.odds
+# Bayes Factor 
+BF01 = post.odds/prior.odds ;BF01 # not worth mentioning in support of Ho
+BF10 = prior.odds/post.odds ;BF10 # strong evidence against the Ho
+# posterior probabilities of the null hypothesis 
+postH = probH*BF01/(probH*BF01+probA)
+postH
+data = c(mean(points),length(points),3)
+prior.par=c(10,1000)
+mnormt.onesided(10,prior.par,data)
+
+
+# Liverpool's  goals succeded in Premier League season 2018-19 
+liverpool = c(4,2,1,2,2,3,1,0,1,4,1,2,3,1,3,4,3,2,4,5,1,1,4,1,1,3,0,5,0,4,2,2,3,2,2,5,3,2)
+length(liverpool)
+quantile(liverpool,probs= c(0.25,0.5,0.95))
+mean(liverpool)
+
+
+estGammaParams <- function(mu, var) {
+  alpha <- mu^2 / var 
+  beta <-  mu  /  var
+  return(params = list(alpha = alpha, beta = beta))
+}
+estGammaParams(2.25,1.125)
+
+
+x = list(p=.9,x=.5)
+datapar=list(data=liverpool,par=c(4.5,2))
+fit1=laplace(logpoissgamma,.5,datapar)
+datapar=list(data=liverpool,par=c(1,.5))
+fit2=laplace(logpoissnormal,.5,datapar)
+datapar=list(data=liverpool,par=c(2,.5))
+fit3=laplace(logpoissnormal,.5,datapar)
+datapar=list(data=liverpool,par=c(1,2))
+fit4=laplace(logpoissnormal,.5,datapar)
+
+postmode=c(fit1$mode,fit2$mode,fit3$mode,fit4$mode)
+postsd=sqrt(c(fit1$var,fit2$var,fit3$var,fit4$var))
+logmarg=c(fit1$int,fit2$int,fit3$int,fit4$int)
+cbind(postmode,postsd,logmarg)
+
+BF21 = exp(-1.145276+1.065522);BF21
+BF23 = exp(-1.145276+3.651244);BF23
+BF24 = exp(-1.145276+2.468496);BF24
+
+
+
+#===================================================================
+#                         CHAPTER    2
+#===================================================================
+library(BayesFactor)
+raceDolls
+chisq.test(raceDolls)
+bf = contingencyTableBF(raceDolls,
+                        sampleType = "indepMulti",
+                        fixedMargin = "cols")
+bf
+
+#  Simulate odds ratio from the posterior 
+
+
+# parameters for gamma prior 
+alpha = 1
+beta  = 1 
+# cell counts
+y11 = 104
+y12 = 189
+y21 = 11037
+y22 = 11034
+or = (104*11034)/(189*11037);or
+# sum of the 2x2 table 
+n = sum(y11,y12,y21,y22)
+#create data matrix 
+d = matrix(c(y11,y12,y21,y22),2,2,byrow = TRUE)
+colnames(d) = c("Treatment","Placebo")
+rownames(d) = c("Exposed","Non-exposed");d
+# set seed 
+set.seed(123456)
+# Simulate from the posterior 
+lambda11 = rgamma(1000, shape = y11+alpha,  rate = n+beta) 
+lambda12 = rgamma(1000, shape = y12+alpha,  rate = n+beta) 
+lambda21 = rgamma(1000, shape = y21+alpha,  rate = n+beta)
+lambda22 = rgamma(1000, shape = y22+alpha,  rate = n+beta) 
+ORsim    = (lambda11*lambda22)/(lambda21*lambda12)
+mean(ORsim)
+sd(ORsim)
+
+
+p1 = lambda11/lambda21
+p2 = lambda12/lambda22
+RRsim  = p1/p2 ;mean(RRsim)
+ARsim  = p1-p2 ;mean(ARsim)
+
+
+
+
+
+# Difference in proportions 
+modelDF <- "
+data {
+  # Number of trials
+  int nA;
+  int nB;
+  # Number of successes
+  int yA;
+  int yB;
+}
+parameters {
+  real<lower=0, upper=1> pA;
+  real<lower=0, upper=1> pB;
+}
+model {
+  pA ~ beta(3,25);
+  pB ~ beta(3,25);
+  yA ~ binomial(nA, pA);
+  yB ~ binomial(nB, pB); 
+}
+generated quantities {
+  real p_diff;
+  p_diff = pB - pA;
+}
+"
+data_list <- list(nA = 600, nB = 750, yA = 72, yB = 120)
+
+stan_samplesDF <- rstan::stan(model_code = modelDF, data = data_list,
+                       seed = 3566543)
+stan_samplesDF
+plot(stan_samplesDF)
+
+posterior <- as.data.frame(stan_samplesDF) ;head(posterior)
+sum(posterior$p_diff > 0) / length(posterior$p_diff)
+
+
+
+
+
+
+#===================================================================
+#                         CHAPTER    3
+#===================================================================
+# Bernoulli Logistic Regression for Ungrouped Data
+nasa <- '
+data {                          
+int<lower=0> N;                       
+int<lower=0,upper=1> y[N];            
+vector[N] x;                          
+}
+parameters {
+real b_0;                           
+real b_1;                            
+}
+model {
+b_0  ~ normal(0,100);
+b_1 ~ normal(0,100);
+for (n in 1:N)
+      y[n] ~ bernoulli(inv_logit(b_0 + b_1 * x[n]));
+}
+'
+
+thermal = c(53,57,58,63,66,67,67,67,68,69,70,70,70,70,72,73,75,75,76,76,78,79,81)
+damage  = c(1,1,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,1,0,0,0,0,0)
+rings   = data.frame(thermal,damage);head(rings)
+data    = list(N = nrow(rings), y = rings$damage, x= rings$thermal);data
+
+# Estimate the model
+fit =  stan(model_code = nasa, 
+            data       = data, 
+            iter       = 4000, 
+            chains     = 4,
+            seed       = 1234,
+            control    = list(adapt_delta=0.90))
+
+print(fit, digits = 3)
+plot(fit)
+launch_shinystan(fit)
+invlogit <- function (x) { (exp(x)) / (1+exp(x)) }
+
+
+eta = 18.266 - (0.280*mean(thermal))
+eta2 = 18.266 - (0.280*31)
+
+invlogit(eta)
+invlogit(eta2)
+round(exp(-0.286),2)
+
+# compare with Frequentist Approach 
+fit2 = glm(damage ~ thermal,family= "binomial",data = rings);fit2
+summary(fit2)
+
+eta3 = 15.0429 - (0.2322*mean(thermal))
+
+invlogit(eta3)
+round(exp(coef(fit2)["thermal"]),2)
+
+
+# Binomial Logistic Regression for Grouped Data
+Binomial ="
+data {
+    int<lower=0> I;     // number of observations
+    int<lower=0> y[I];  // number of successes
+    int<lower=0> N[I];  // number of trials
+   }
+parameters {
+    real alpha;        // intercept
+}
+model {
+   alpha  ~ normal(0,1); //prior
+   y ~ binomial_logit(I, alpha); // likelihood
+} "
+df <- list(I = 8,
+           y = c(3,3,2,2,1,3,3,1),
+           N = c(4,8,7,3,4,6,9,5))
+
+fit2 <- stan(model_code = Binomial,
+            data   = df, 
+            iter   = 2000, 
+            chains = 4,
+            warmup = 500,
+            thin   = 1,
+            seed   = 123,
+            control = list(adapt_delta=0.99))
+print(fit2)
+
+invlogit(-0.89)
+
+# Laplace - Metropolis for logistic regression 
+
+thermal = c(53,57,58,63,66,67,67,67,68,69,70,70,70,70,72,73,75,75,76,76,78,79,81)
+damage  = c(1,1,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,1,0,0,0,0,0)
+rings   = data.frame(thermal,damage);head(rings)
+mod5 = MCMClogit(damage ~ thermal,
+                 data   = rings,
+                 burnin = 1000,
+                 mcmc   = 100000,
+                 thin   = 1,
+                 seed   = 12345,
+                 b0     = 15,
+                 B0     = 15,
+                 marginal.likelihood = "Laplace")
+summary(mod5)
+
+### Poisson regression 
+data(eba1977)
+head(eba1977)
+
+poiss_glm<- glm(formula = cases ~ age + city + log(pop),
+                family  = poisson(link = "log"),
+                data    = eba1977)
+summary(poiss_glm)
+confint(poiss_glm) # zero is included  in the log(pop) variable 
+poisson_glm<- glm(formula = cases ~ age + city ,offset=(log(pop)),
+                  family  = poisson(link = "log"),
+                  data    = eba1977)
+summary(poisson_glm)
+confint(poisson_glm)
+MM <- as.data.frame(model.matrix(poisson_glm))
+MM$offset <- log(eba1977$pop)
+names(MM) <- c("intercept", "age55_59", "age60_64", "age65_69", "age70_74", 
+               "age75plus", "cityHorsens", "cityKolding", "cityVejle", "offset")
+
+data   <- as.list(MM)
+data$y <- eba1977$cases
+data$N <- nrow(MM)
+data$p <- ncol(MM) - 1
+
+
+pois=" 
+ data {
+   // Defining variables in data
+   // Number of observations (an integer)
+   int<lower=0> N;
+   // Number of beta parameters
+   int<lower=0> p;
+ 
+   // Covariates
+   int <lower=0, upper=1> intercept[N];
+   int <lower=0, upper=1> age55_59[N];
+   int <lower=0, upper=1> age60_64[N];
+   int <lower=0, upper=1> age65_69[N];
+   int <lower=0, upper=1> age70_74[N];
+   int <lower=0, upper=1> age75plus[N];
+   int <lower=0, upper=1> cityHorsens[N];
+   int <lower=0, upper=1> cityKolding[N];
+   int <lower=0, upper=1> cityVejle[N];
+
+   // offset
+   real offset[N];
+   
+   // Count outcome
+   int<lower=0> y[N];
+ }
+ 
+ parameters {
+   // Define parameters to estimate
+   real beta[p];
+ }
+ 
+ transformed parameters  {
+   //
+   real lp[N];
+   real <lower=0> mu[N];
+
+ for (i in 1:N) {
+     // Linear predictor
+ lp[i] <- beta[1] + beta[2]*age55_59[i] + beta[3]*age60_64[i] + beta[4]*age65_69[i] + beta[5]*age70_74[i] + beta[6]*age75plus[i]+ beta[7]*cityHorsens[i] + beta[8]*cityKolding[i] + beta[9]*cityVejle[i] + offset[i];
+ 
+     // Mean
+     mu[i] <- exp(lp[i]);
+   }
+ }
+ 
+ model {
+   // Prior part of Bayesian inference
+   // Flat prior for mu (no need to specify if non-informative)
+   beta ~ normal(0,10);
+ 
+   // Likelihood part of Bayesian inference
+   y ~ poisson(mu);
+}"
+poisson_stan <- stan(model_code = pois, data = data,
+                     chains = 4,
+                     iter   = 4000, 
+                     warmup = 500,
+                     thin   = 1,
+                     seed   = 23432)
+pars <- c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]",
+          "beta[6]","beta[7]","beta[8]","beta[9]","lp__")
+print(poisson_stan, pars = pars)
+plot(poisson_stan)
+
+print(poisson_stan)
+check_hmc_diagnostics(poisson_stan)
+loo(poisson_stan)
+pars2 = c(-5.65,1.10,1.52,1.77,1.86,1.42,-0.33,-0.37,-0.27)
+exp(pars2)
+glm1 <- stan_glm(formula = cases ~ age + city , offset = (log(pop)),
+                 family  = poisson(link = "log"),
+                 prior   = normal(0,2, autoscale = FALSE),
+                 chains  = 4, iter = 4000,
+                 data    = eba1977,
+                 seed    = 9812)
+summary(glm1)
+exp(coef(glm1))
+
+
+
+# M U L T I N O M I A L 
+# R E G R E S S I 0 N  
+library(foreign)
+ucla <- read.dta("https://stats.idre.ucla.edu/stat/data/hsbdemo.dta")
+head(ucla)
+ucla$prog <- relevel(ucla$prog, ref = "academic")
+
+multi1 <- multinom(prog ~ ses + write , data = ucla)
+summary(multi1)
+exp(coef(multi1))
+X = model.matrix(multi1);head(X);tail(X)
+y = ucla$prog;y
+order(y)
+X = X[order(y),];X;nrow(X);ncol(X)
+y = y[order(y)];y
+# number of classes, D is dimension of model matrix
+datalist = list(N=nrow(X), x = X, y=as.integer(y), K=n_distinct(y), D=ncol(X))
+
+multinomial = "
+data {
+  int<lower=1> K;                   // number of classes
+  int<lower=1> N;                   // nrow of x
+  int<lower=1> D;                   // ncol of x
+  int<lower=1, upper=K> y[N];       // target as integer
+  vector[D] x[N];                   // array of D
+}
+transformed data {
+  row_vector[D] zeros;              // create reference level coefs of zero
+  zeros = rep_row_vector(0, D);
+}
+parameters {
+  matrix[K-1,D] beta_raw;           // estimated coefs
+}
+transformed parameters{
+  matrix[K, D] beta;
+  beta = append_row(zeros, beta_raw);
+}
+model {
+  
+  to_vector(beta_raw) ~ normal(0,10);   // prior
+  
+
+  for (n in 1:N)
+    y[n] ~ categorical_logit(beta * x[n]);   // likelihood
+}"
+
+# categorical based on K-1, 
+# with prior for Betas Normal(0,1)
+bayes_multinom = stan(model_code = multinomial,
+                      data   = datalist, 
+                      cores  = 4,
+                      chains = 4,
+                      iter   = 4000, 
+                      warmup = 500,
+                      thin   = 1,
+                      seed   = 23432,
+                      control = list(adapt_delta=0.9))
+
+pars <- c("beta_raw[1,1]","beta_raw[1,2]","beta_raw[1,3]","beta_raw[1,4]",
+          "beta_raw[2,1]","beta_raw[2,2]","beta_raw[2,3]","beta_raw[2,4]")
+print(bayes_multinom)
+plot(bayes_multinom,pars =pars)
+launch_shinystan(bayes_multinom)
+coefficient = matrix(c(2.87,-0.54,-1.19,-0.06,
+                       5.33,0.32,-1.01,-0.12)
+                     ,2,4,byrow = TRUE)
+dimnames(coefficient) = list(c("general","vocation"),
+                             c("intercept","sesmiddle","seshigh","write"))
+exp(coefficient)
+
+bmult = Reduce(cbind, rstan::extract(bayes_multinom, pars=pars))
+colMeans(bmult)
+
+# ORDINAL LOGISTIC  REGRESSION 
+data(housing)
+head(housing)
+
+
+house.plr <- polr(Sat ~ Infl + Type + Cont,
+                  data = housing, weights = Freq)
+
+## view a summary of the model
+summary(house.plr)
+## store table
+(ctable <- coef(summary(house.plr)))
+(ci <- confint(house.plr)) # default method gives profiled CIs
+## odds ratios
+exp(coef(house.plr))
+## OR and CI
+exp(cbind(OR = exp(coef(house.plr)), exp(ci)))
+
+house_stan_polr <- stan_polr(Sat ~ Infl + Type + Cont,
+                             weights = housing$Freq,
+                             data = housing, 
+                             method = "logistic",
+                             prior = R2(0.9, "mean"),
+                             init_r = 0.1, seed = 12345,
+                             algorithm = "sampling")
+
+print(house_stan_polr)
+plot(house_stan_polr)
+launch_shinystan(house_stan_polr)
+exp(coef(house_stan_polr))
+print(house_stan_polr, pars = "beta")
+
+
+#==================================================================
+#                         CHAPTER    4 
+#================================================================== 
+
+
+# PENALISED LIKELIHOOD CRITERIA
+
+model1 = "data {
+  int N;
+  real y[N];
+}
+parameters {
+  real<lower=0> a;
+  real<lower=0> b;
+}
+model {
+  y ~ gamma(a, b);
+}"
+
+
+model2 = "
+data {
+  int N;
+  real y[N];
+}
+parameters {
+  real<lower=0> mu;
+  real<lower=0> sigma;
+}
+model {
+  y ~ lognormal(mu, sigma);
+}"
+y    = rgamma(1000, 2, 4)
+data = list(y=y, N=length(y))
+gammaModel       = stan_model(model_code =   model1)
+lognormalModel   = stan_model(model_code =   model2)
+gammaSamples     = sampling(gammaModel,
+                            data    = data,
+                            iter    = 2000, 
+                            chains  = 4,
+                            seed    = 12345,
+                            control = list(adapt_delta=0.99))
+pars = c("a","b")
+print(gammaSamples,pars = pars)
+
+lognormalSamples = sampling(lognormalModel,
+                            data    = data,
+                            iter    = 2000, 
+                            chains  = 4,
+                            seed    = 12345,
+                            control = list(adapt_delta=0.99))  
+
+postSamplesGamma     = Reduce(cbind, rstan::extract(gammaSamples, pars=c("a", "b")))
+postSampleslognormal = Reduce(cbind, rstan::extract(lognormalSamples, pars=c("mu", "sigma")))
+
+aic = function(data, likelihood, postSamples){
+  logLikelihood = function(theta) sum(likelihood(data, theta[1], theta[2], log=TRUE))
+  thetaBayes    = colMeans(postSamples)
+  paic     =    2 * 2
+  deviance =  - 2 * logLikelihood(thetaBayes)
+  aic      =    deviance   + paic
+  return(aic)
+}            
+bic = function(data, likelihood, postSamples){
+  logLikelihood = function(theta) sum(likelihood(data, theta[1], theta[2], log=TRUE))
+  thetaBayes    = colMeans(postSamples)
+  n        =    length(data)
+  pbic     =    2 * log(n)
+  deviance =  - 2 * logLikelihood(thetaBayes)
+  bic      =    deviance   + pbic
+  return(bic)
+}            
+
+dic = function(data, likelihood, postSamples){
+  logLikelihood = function(theta) sum(likelihood(data, theta[1], theta[2], log=TRUE))
+  thetaBayes    = colMeans(postSamples)
+  pdic     =    2 * logLikelihood(thetaBayes) - mean(apply(postSamples, 1, logLikelihood) )
+  deviance =  - 2 * logLikelihood(thetaBayes)
+  dic      =    deviance   + pdic
+  return(dic)
+}  
+
+set.seed(12345)
+gammaAIC     = aic(y, dgamma, postSamplesGamma)
+lognormalAIC = aic(y, dlnorm, postSampleslognormal)
+compareAIC   = list(aic1 = gammaAIC,  
+                    aic2 = lognormalAIC);compareAIC
+gammaBIC     = bic(y, dgamma, postSamplesGamma)
+lognormalBIC = bic(y, dlnorm, postSampleslognormal)
+compareBIC   = list(bic1 = gammaBIC,  
+                    bic2 = lognormalBIC);compareBIC
+
+gammaDIC     = dic(y, dgamma, postSamplesGamma)
+lognormalDIC = dic(y, dlnorm, postSampleslognormal)
+compareDIC   = list(dic1 = gammaDIC,  
+                    dic2 = lognormalDIC);compareDIC
+
+
+# OUT OF SAMPLE DATA CRITERIA RESULTS COMPARISON
+set.seed(12345)
+gammaAICOut     =  aic(rgamma(100, 2, 4), dgamma, postSamplesGamma)
+lognormalAICOut =  aic(rgamma(100, 2, 4), dlnorm, postSampleslognormal)
+compareAIC2     =  list(aic1 = gammaAICOut,
+                        aic2 = lognormalAICOut);compareAIC2
+gammaBICOut     =  bic(rgamma(100, 2, 4), dgamma, postSamplesGamma)
+lognormalBICOut =  bic(rgamma(100, 2, 4), dlnorm, postSampleslognormal)
+compareBIC2     =  list(bic1 = gammaBICOut,
+                        bic2 = lognormalBICOut);compareBIC2
+
+gammaDICOut     =  dic(rgamma(100, 2, 4), dgamma, postSamplesGamma)
+lognormalDICOut =  dic(rgamma(100, 2, 4), dlnorm, postSampleslognormal)
+compareDIC2     =  list(dic1 = gammaDICOut,
+                        dic2 = lognormalDICOut);compareDIC2
+
+
+# COMPARISON OF THE EXPECTED PREDICTIVE ACCURACY
+# WITH LOO-CV
+
+logisticLoo = "data {
+  int<lower=0> N;             // number of data points
+  int<lower=0> P;             // number of predictors (including intercept)
+  matrix[N,P] X;              // predictors (including 1s for intercept)
+  int<lower=0,upper=1> y[N];  // binary outcome
+}
+parameters {
+  vector[P] beta;
+}
+model {
+  beta ~ normal(0, 1);
+  y ~ bernoulli_logit(X * beta);
+}
+generated quantities {
+  vector[N] log_lik;
+  for (n in 1:N) {
+    log_lik[n] = bernoulli_logit_lpmf(y[n] | X[n] * beta);
+  }
+}"
+
+data(birthwt)
+head(birthwt)
+
+as.factor(birthwt$low)
+X <- model.matrix(~ race+lwt,birthwt)
+X
+standata <- list(y =birthwt$low , X = X, N = nrow(X), P = ncol(X))
+# LOO -CV
+# Fit model
+fit_1 <- stan(model_code =  logisticLoo,data = standata)
+print(fit_1)
+pars = c("log_lik")
+# Extract pointwise log-likelihood and compute LOO
+log_lik_1 <- extract_log_lik(fit_1,parameter_name = pars, merge_chains = FALSE)
+-2*min(log_lik_1) + 2*log(length(standata$y))
+r_eff <- relative_eff(exp(log_lik_1)) 
+loo_1 <- loo(log_lik_1, r_eff = r_eff, cores = 2)
+print(loo_1)
+
+
+standata$X[, "lwt"] <- log(standata$X[, "lwt"])
+fit_2 <- stan(fit = fit_1, data = standata) 
+log_lik_2 <- extract_log_lik(fit_2,parameter_name = pars, merge_chains = FALSE)
+r_eff_2 <- relative_eff(exp(log_lik_2))
+loo_2 <- loo(log_lik_2, r_eff = r_eff_2, cores = 2)
+print(loo_2)
+comp <- loo_compare(loo_1, loo_2)
+print(comp)
+
+fit_2 <- stan(fit = fit_1, data = standata) 
+log_lik_2 <- extract_log_lik(fit_2,parameter_name = pars, merge_chains = FALSE)
+r_eff_2 <- relative_eff(exp(log_lik_2))
+loo_2 <- loo(log_lik_2, r_eff = r_eff_2, cores = 2)
+print(loo_2)
+comp <- loo_compare(loo_1, loo_2)
+print(comp)
+
+
+# full comparison for variable selection 
+# step wise forward variable selection 
+X0 <- model.matrix(~1,birthwt)
+X0
+standata0 <- list(y =birthwt$low , X = X0, N = nrow(X0), P = ncol(X0))
+fit_0 <- stan(model_code = logisticLoo, data = standata0,seed=12345) 
+log_lik_0<- extract_log_lik(fit_0,parameter_name = pars, merge_chains = FALSE)
+r_eff_0 <- relative_eff(exp(log_lik_0))
+loo_0 <- loo(log_lik_0, r_eff = r_eff_0, cores = 2)
+rll0=rowSums(log_lik_0)
+k0 = 2 
+
+
+
+X1 <- model.matrix(~race,birthwt)
+X1
+standata1 <- list(y =birthwt$low , X = X1, N = nrow(X1), P = ncol(X1))
+fit_1 <- stan(model_code = logisticLoo, data = standata1,seed=12345) 
+log_lik_1 <- extract_log_lik(fit_1,parameter_name = pars, merge_chains = FALSE)
+r_eff_1 <- relative_eff(exp(log_lik_1))
+loo_1 <- loo(log_lik_1, r_eff = r_eff_1, cores = 2)
+rll1=rowSums(log_lik_1)
+k1 = 2 
+
+
+
+X2 <- model.matrix(~ race + lwt,birthwt)
+X2
+standata2 <- list(y =birthwt$low , X = X2, N = nrow(X2), P = ncol(X2))
+fit_2 <- stan(model_code =  logisticLoo, data = standata2,seed=12345) 
+log_lik_2 <- extract_log_lik(fit_2,parameter_name = pars, merge_chains = FALSE)
+r_eff_2 <- relative_eff(exp(log_lik_2))
+loo_2 <- loo(log_lik_2, r_eff = r_eff_2, cores = 2)
+rll2=rowSums(log_lik_2)
+k2 = 3 
+
+
+comp <- loo_compare(loo_1, loo_2)
+print(comp)
+X3 <- model.matrix(~ race+lwt+age,birthwt)
+X3
+standata3 <- list(y =birthwt$low , X = X3, N = nrow(X3), P = ncol(X3))
+fit_3 <- stan(model_code =  logisticLoo,data = standata3,seed=12345)
+log_lik_3 <- extract_log_lik(fit_3,parameter_name = pars, merge_chains = FALSE)
+r_eff_3 <- relative_eff(exp(log_lik_3))
+loo_3 <- loo(log_lik_3, r_eff = r_eff_3, cores = 2)
+rll3=rowSums(log_lik_3)
+k3 = 4 
+
+
+
+
+
+X4 <- model.matrix(~ race+lwt+age+smoke,birthwt)
+X4
+standata4 <- list(y =birthwt$low , X = X4, N = nrow(X4), P = ncol(X4))
+fit_4 <- stan(model_code =  logisticLoo,data = standata4,seed=12345)
+log_lik_4 <- extract_log_lik(fit_4,parameter_name = pars, merge_chains = FALSE)
+r_eff_4 <- relative_eff(exp(log_lik_4))
+loo_4 <- loo(log_lik_4, r_eff = r_eff_4, cores = 2)
+rll4=rowSums(log_lik_4)
+k4 = 5 
+
+
+
+
+
+
+X5 <- model.matrix(~ race+lwt+age+smoke+ptl,birthwt)
+X5
+standata5 <- list(y =birthwt$low , X = X5, N = nrow(X5), P = ncol(X5))
+fit_5 <- stan(model_code =  logisticLoo,data = standata5,seed=12345)
+log_lik_5 <- extract_log_lik(fit_5,parameter_name = pars, merge_chains = FALSE)
+r_eff_5 <- relative_eff(exp(log_lik_5))
+loo_5 <- loo(log_lik_5, r_eff = r_eff_5, cores = 2)
+rll5=rowSums(log_lik_5)
+k5 = 6 
+
+
+
+
+
+
+X6 <- model.matrix(~ race+lwt+age+smoke+ptl+ht,birthwt)
+X6
+standata6 <- list(y =birthwt$low , X = X6, N = nrow(X6), P = ncol(X6))
+fit_6 <- stan(model_code =  logisticLoo,data = standata6,seed=12345)
+log_lik_6 <- extract_log_lik(fit_6,parameter_name = pars, merge_chains = FALSE)
+r_eff_6 <- relative_eff(exp(log_lik_6))
+loo_6 <- loo(log_lik_6, r_eff = r_eff_6, cores = 2)
+rll6=rowSums(log_lik_6)
+k6 = 7 
+
+
+
+
+
+
+X7 <- model.matrix(~ race+lwt+age+smoke+ptl+ht+ui,birthwt)
+X7
+standata7 <- list(y =birthwt$low , X = X7, N = nrow(X7), P = ncol(X7))
+fit_7 <- stan(model_code =  logisticLoo,data = standata7,seed=12345)
+log_lik_7 <- extract_log_lik(fit_7,parameter_name = pars, merge_chains = FALSE)
+r_eff_7 <- relative_eff(exp(log_lik_7))
+loo_7 <- loo(log_lik_7, r_eff = r_eff_7, cores = 2)
+rll7=rowSums(log_lik_7)
+k7 = 8 
+
+
+
+
+
+X8 <- model.matrix(~ race+lwt+age+smoke+ptl+ht+ui+ftv,birthwt)
+X8
+standata8 <- list(y =birthwt$low , X = X8, N = nrow(X8), P = ncol(X8))
+fit_8 <- stan(model_code =  logisticLoo,data = standata8,seed=12345)
+log_lik_8 <- extract_log_lik(fit_8,parameter_name = pars, merge_chains = FALSE)
+r_eff_8 <- relative_eff(exp(log_lik_8))
+loo_8 <- loo(log_lik_8, r_eff = r_eff_8, cores = 2)
+rll8=rowSums(log_lik_8)
+k8 = 9
+
+
+
+minimmap =c(min(rll0),min(rll1),min(rll2),min(rll3),
+         min(rll4),min(rll5),min(rll6),min(rll7),
+         min(rll8));minimmap
+ql = c(quantile(rll0,probs = c(0.25)),
+      quantile(rll1,probs = c(0.25)),
+      quantile(rll2,probs = c(0.25)),
+      quantile(rll3,probs = c(0.25)),
+      quantile(rll4,probs = c(0.25)),
+      quantile(rll5,probs = c(0.25)),
+      quantile(rll6,probs = c(0.25)),
+      quantile(rll7,probs = c(0.25)),
+      quantile(rll8,probs = c(0.25)) );ql
+meanmap =c(mean(rll0),mean(rll1),mean(rll2),mean(rll3),
+           mean(rll4),mean(rll5),mean(rll6),mean(rll7),
+           mean(rll8));meanmap
+qu = c(quantile(rll0,probs = c(0.75)),
+      quantile(rll1,probs = c(0.75)),
+      quantile(rll2,probs = c(0.75)),
+      quantile(rll3,probs = c(0.75)),
+      quantile(rll4,probs = c(0.75)),
+      quantile(rll5,probs = c(0.75)),
+      quantile(rll6,probs = c(0.75)),
+      quantile(rll7,probs = c(0.75)),
+      quantile(rll8,probs = c(0.75)) );qu
+dat = cbind(minimmap,ql,meanmap,qu);dat
+
+dm = c(k0,k1,k2,k3,k4,k5,k6,k7,k8)
+minaic =c(-2*min(rll0) +k0*2,-2*min(rll1) +k1*2,-2*min(rll2) +k2*2,-2*min(rll3) +k3*2,
+          -2*min(rll4) +k4*2,-2*min(rll5) +k5*2,-2*min(rll6) +k6*2,-2*min(rll7) +k7*2,
+          -2*min(rll8) +k8*2)
+minbic =c(-2*min(rll0) +k0*log(length(standata0$y)),-2*min(rll1) +k1*log(length(standata1$y)),-2*min(rll2) +k2*log(length(standata2$y)),-2*min(rll3) +k3*log(length(standata3$y)),
+          -2*min(rll4) +k4*log(length(standata4$y)),-2*min(rll5) +k5*log(length(standata5$y)),-2*min(rll6) +k8*log(length(standata6$y)),-2*min(rll7) +k7*log(length(standata7$y)),
+          -2*min(rll8) +k8*log(length(standata8$y)) )
+meanaic =c(-2*mean(rll0) +k0*2,-2*mean(rll1) +k1*2,-2*mean(rll2) +k2*2,-2*mean(rll3) +k3*2,
+           -2*mean(rll4) +k4*2,-2*mean(rll5) +k5*2,-2*mean(rll6) +k6*2,-2*mean(rll7) +k7*2,
+           -2*mean(rll8) +k8*2)
+meanbic =c(-2*mean(rll0) +k0*log(length(standata0$y)),-2*mean(rll1) +k1*log(length(standata1$y)),-2*mean(rll2) +k2*log(length(standata2$y)),-2*mean(rll3) +k3*log(length(standata3$y)),
+           -2*mean(rll4) +k4*log(length(standata4$y)),-2*mean(rll5) +k5*log(length(standata5$y)),-2*mean(rll6) +k8*log(length(standata6$y)),-2*mean(rll7) +k7*log(length(standata7$y)),
+           -2*mean(rll8) +k8*log(length(standata8$y)) )
+medianaic =c(-2*median(rll0) +k0*2,-2*median(rll1) +k1*2,-2*median(rll2) +k2*2,-2*median(rll3) +k3*2,
+             -2*median(rll4) +k4*2,-2*median(rll5) +k5*2,-2*median(rll6) +k6*2,-2*median(rll7) +k7*2,
+             -2*median(rll8) +k8*2)
+medianbic =c(-2*median(rll0) +k0*log(length(standata0$y)),-2*median(rll1) +k1*log(length(standata1$y)),-2*median(rll2) +k2*log(length(standata2$y)),-2*median(rll3) +k3*log(length(standata3$y)),
+            -2*median(rll4) +k4*log(length(standata4$y)),-2*median(rll5) +k5*log(length(standata5$y)),-2*median(rll6) +k8*log(length(standata6$y)),-2*median(rll7) +k7*log(length(standata7$y)),
+            -2*median(rll8) +k8*log(length(standata8$y)) )
+dat2 =cbind(dm,minaic,minbic,meanaic,meanbic,medianaic,medianbic)
+dat2
+comp <- loo_compare(loo_0,loo_1, loo_2,loo_3,loo_4,loo_5,loo_6,loo_7,loo_8)
+print(comp)
+
+
+# Liverpool's Data Premier League scores 2018-2019
+liverpool = c(4,2,1,2,2,3,1,0,1,4,1,2,3,1,3,4,3,2,4,5,1,1,4,1,1,3,0,5,0,4,2,2,3,2,2,5,3,2)
+length(liverpool)
+mean(liverpool)
+var(liverpool)
+
+
+# estimating Gamma parameters given the mean and the var of the data 
+estGammaParams <- function(mu, var) {
+  alpha <- mu^2 / var 
+  beta <-  mu  /  var
+  return(params = list(alpha = alpha, beta = beta))
+}
+# gamma parameters to pass in gamma prior 
+estGammaParams(2.25,1.125)
+
+
+
+# 1st model of Poisson-Gamma Model 
+liv ="data {
+  int N;
+  int y[N];
+}parameters {
+  real<lower=0> lambda;
+}model {  
+  lambda ~ gamma(4.5,2);
+  y ~ poisson(lambda);
+}
+generated quantities {
+ vector[N] log_lik;
+  for (n in 1:N) {
+  log_lik[n] = poisson_lpmf(y[N] | lambda);
+}} "
+
+# data as a list
+stan.dat <- list(N = length(liverpool),y = liverpool)
+
+# fit the sampling model to HMC 
+fit <- stan(model_code  = liv,
+            data       = stan.dat,
+            iter       = 2000, 
+            chains     = 4,
+            seed       = 12345,
+            control    = list(adapt_delta=0.9))
+
+# print posterior mean of lambda parameter 
+print(fit)#,pars = "lambda")
+
+# plot parameter 
+plot(fit,pars = "lambda")
+
+# extract log_lik from posterior samples 
+log_lik_1 <- extract_log_lik(fit,
+                             parameter_name = "log_lik",
+                             merge_chains = FALSE)
+
+
+r_eff1 <- relative_eff(exp(log_lik_1)) 
+loo_1 <- loo(log_lik_1, r_eff = r_eff1, cores = 4)
+# aic from map minimum 
+aic = min(rowSums(log_lik_1)) + 2*2 ;aic
+# bic from map minimum 
+bic = min(rowSums(log_lik_1)) + 2*log(length(liverpool)) ;bic
+print(loo_1)
+plot(loo_1)
+
+
+# 2nd model of Log Poisson-Normal Model 
+liv2 ="data {
+  int N;
+  int y[N];
+}parameters {
+  real<lower=0> lambda;
+}model {  
+  lambda ~ normal(2,0.5);
+  y ~ poisson(lambda);
+}
+generated quantities {
+ vector[N] log_lik;
+  for (n in 1:N) {
+  log_lik[n] = poisson_lpmf(y[N] | lambda);
+}} "
+
+# data as a list 
+stan.dat <- list(N = length(liverpool),y = liverpool)
+
+# fit the sampling model to HMC 
+fit2 <- stan(model_code = liv2,
+             data = stan.dat,
+             iter = 2000, 
+             chains = 4,
+             seed = 12345,
+             control = list(adapt_delta=0.99))
+
+# print posterior mean of lambda parameter 
+print(fit2,pars = "lambda")
+# plot parameter 
+plot(fit2,pars = "lambda")
+# extract log_lik from posterior samples 
+log_lik_2 <- extract_log_lik(fit2,
+                             parameter_name = "log_lik",
+                             merge_chains = FALSE)
+# aic from map minimum 
+aic = min(rowSums(log_lik_2)) + 2*2 ;aic
+# bic from map minimum 
+bic = min(rowSums(log_lik_2)) + 2*log(length(liverpool)) ;bic
+r_eff2 <- relative_eff(exp(log_lik_2)) 
+loo_2 <- loo(log_lik_2, r_eff = r_eff2, cores = 4)
+print(loo_2)
+plot(loo_2)
+
+
+# comparing the two predictive accuracies of the models 
+comp <- loo_compare(loo_1, loo_2)
+print(comp)
+# When that difference, elpd_diff, is positive then the expected predictive
+# accuracy for the second model is higher. 
+# A negative elpd_diff favors the first model.
+# In our case model2 with log poisson-normal has 
+# a better expected predictive accuracy and it's 
+# better that the first with log poisson-gamma model 
+
+
+
+
+
+
+
+#===================================================================
+#                         CHAPTER    5
+#===================================================================
+# McNmear test
+ratings <- matrix(c(175, 16, 54, 188),
+                  ncol=2,byrow=TRUE,
+                  dimnames = list("2004 Election" = c("Democrat", "Republican"),
+                                  "2008 Election" = c("Democrat", "Republican")))
+ratings 
+mcnemar.test(ratings, correct=FALSE)          
+
+
+
+mcnemar = "data { 
+  int<lower=1> n; 
+  int<lower=0> k;
+} 
+parameters {
+  real<lower=0,upper=1> theta;
+} 
+model {
+  theta ~ beta(1, 1);
+  k ~ binomial(n, theta);
+} "
+k1 = 16
+n1 = 70
+data_list1 = list(k = k1,n =n1)
+stanmodelH0 = stan_model(model_code = mcnemar, model_name="stanmodel")
+stanfitH0   = sampling(stanmodelH0,
+                       data   = data_list1,
+                       iter   = 20000, 
+                       warmup = 1000,
+                       chains = 4,
+                       cores  = 4,
+                       seed   = 12345,
+                       control = list(adapt_delta = .99))
+print(stanfitH0)
+
+H0 = bridge_sampler(stanfitH0)
+print(H0)
+
+# compute percentage errors
+H0.error <- error_measures(H0)$percentage
+print(H0.error)
+
+
+
+
+h1 = -39.71
+h0 = dbinom(16,70,1/2,log =TRUE)
+# compute Bayes factor
+BF01=bayes_factor(h0,h1,log=TRUE)
+print(BF01)
+
+
+
+
+
+# Kappa Cohen 
+KappaCohen <- "
+// Kappa Coefficient of Agreement
+data { 
+  int<lower=0> y[4];   
+}
+parameters {
+  // Underlying Rates
+  // Rate first rater  decides 'one'
+  real<lower=0,upper=1> alpha;
+  // Rate second rater decides 'one' when the first rater  decides 'one'
+  real<lower=0,upper=1> beta;
+  // Rate second rater  decides 'zero' when the first rater decides 'zero'
+  real<lower=0,upper=1> gamma;
+} 
+transformed parameters {
+  simplex[4] pi;
+  real xi;
+  real psi;
+  real kappa;
+  // Probabilities For Each Count
+  pi[1] = alpha * beta;
+  pi[2] = alpha * (1 - beta);
+  pi[3] = (1 - alpha) * (1 - gamma);
+  pi[4] = (1 - alpha) * gamma;
+    
+  
+  // Rate of agreement (second rater agrees with the first rater )
+  xi = alpha * beta + (1 - alpha) * gamma ;
+  // Rate of Chance Agreement
+  psi = (pi[1] + pi[2]) * (pi[1] + pi[3]) + (pi[2] + pi[4]) * (pi[3] + pi[4]);  
+  kappa = (xi - psi) / (1 - psi);   // Chance-Corrected Agreement
+}
+model {
+  alpha ~ beta(1, 1);  
+  beta  ~ beta(1, 1);  
+  gamma ~ beta(1, 1);  
+  y ~ multinomial(pi);   // Count Data 
+}"
+
+
+
+
+# Nutrition
+y <- c(136, 92, 69, 240)
+
+
+data <- list(y=y) 
+myinits <- list(
+  list(alpha=.5, beta=.5, gamma=.5))
+
+# parameters to be monitored: 
+parameters <- c("kappa", "xi", "psi", "alpha", "beta", "gamma", "pi")
+
+samples <- stan(model_code  = KappaCohen,   
+                data=data, 
+                init=myinits,
+                seed = 989213,
+                pars=parameters,
+                iter=4000, 
+                chains=4)
+
+print(samples)
+launch_shinystan(samples)
+plot(samples)
+
+# Compare to Cohen's point estimate
+n <- sum(y)
+p0 <- (y[1]+y[4])/n
+pe <- (((y[1]+y[2]) * (y[1]+y[3])) + ((y[2]+y[4]) * (y[3]+y[4]))) / n^2
+kappa.Cohen <- (p0-pe) / (1-pe) 
+kappa.Cohen
+
+# Bradley Terry model 
+
+bt="data {
+  int<lower = 0> K;                     // players
+  int<lower = 0> N;                     // games
+  int<lower=1, upper = K> team1[N];     // team 1 for game n
+  int<lower=1, upper = K> team0[N];     // team 0 for game n
+  int<lower = 0, upper = 1> y[N];       // winner for game n
+}
+parameters {
+  real<lower = 0> sigma;                // scale of ability variation
+  vector[K] alpha;                      // ability for team n
+}
+model {
+  sigma ~ lognormal(0, 0.5);            // boundary avoiding
+  alpha ~ normal(0, sigma);             // hierarchical
+  y ~ bernoulli_logit(alpha[team1] - alpha[team0]);
+}
+generated quantities {
+  int<lower=1, upper=K> ranking[K];       // rank of team ability
+  {
+    int ranked_index[K] = sort_indices_desc(alpha);
+    for (k in 1:K)
+      ranking[ranked_index[k]] = k;
+  }
+}"
+
+K <- 2
+N <- 6
+team1 <- c(2,1,2,1,2,1)
+team0 <- c(1,2,1,2,1,2)
+y <- c(0,1,0,1,1,1)
+bt_data = list(K=K,N=N,team0=team0,team1=team1,y=y)
+bt_data
+fit3= stan(model_code = bt,
+           data = bt_data,
+           iter = 4000, 
+           chains = 4,
+           warmup = 500,
+           seed = 12345,
+           control = list(adapt_delta=0.99))
+
+print(fit3, pars=c("alpha", "lp__"), probs=c(.1,.5,.9))
+plot(fit3)
+launch_shinystan(fit3)
+traceplot(fit3, pars = c("alpha"), inc_warmup = TRUE, nrow = 2)
+pairs(fit3, pars = c("alpha"), las = 1)
+post <- extract(fit3,pars =c("alpha", "lp__"), permuted = TRUE)
+post
+p21 = exp(-.58)/(exp(-.58) +exp(0.58) );p21
