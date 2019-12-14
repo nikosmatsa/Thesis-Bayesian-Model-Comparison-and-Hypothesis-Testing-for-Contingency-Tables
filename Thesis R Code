@@ -177,7 +177,7 @@ BF24 = exp(-1.145276+2.468496);BF24
 #                         CHAPTER    2
 #===================================================================
 library(BayesFactor)
-raceDolls
+data(raceDolls)
 chisq.test(raceDolls)
 bf = contingencyTableBF(raceDolls,
                         sampleType = "indepMulti",
@@ -224,6 +224,17 @@ ARsim  = p1-p2 ;mean(ARsim)
 
 
 # Difference in proportions 
+set.seed(1234)
+a = 3 
+b = 25
+y1= 120; y0= 72; n1=750; n0=600
+p0 = rbeta(1000, y0+a, n0+b)
+p1 = rbeta(1000, y1+a, n1+b)
+AR =  p1-p0
+mean(AR)
+sum(p1 > p0) / 1000
+
+# alternatively in STAN
 modelDF <- "
 data {
   # Number of trials
@@ -1106,7 +1117,7 @@ print(H0.error)
 
 
 h1 = -39.71
-h0 = dbinom(16,70,1/2,log =TRUE)
+h0 = dbinom(16,70,1/2,log =TRUE);h0
 # compute Bayes factor
 BF01=bayes_factor(h0,h1,log=TRUE)
 print(BF01)
