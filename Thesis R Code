@@ -222,7 +222,7 @@ ARsim  = p1-p2 ;mean(ARsim)
 
 
 
-
+# Congugate Beta - Binomial 
 # Difference in proportions 
 set.seed(1234)
 a = 3 
@@ -232,6 +232,7 @@ p0 = rbeta(1000, y0+a, n0+b)
 p1 = rbeta(1000, y1+a, n1+b)
 AR =  p1-p0
 mean(AR)
+sd(AR)
 sum(p1 > p0) / 1000
 
 # alternatively in STAN
