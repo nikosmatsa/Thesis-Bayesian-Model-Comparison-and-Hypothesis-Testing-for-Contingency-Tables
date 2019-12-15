@@ -742,7 +742,7 @@ print(fit_1)
 pars = c("log_lik")
 # Extract pointwise log-likelihood and compute LOO
 log_lik_1 <- extract_log_lik(fit_1,parameter_name = pars, merge_chains = FALSE)
--2*min(log_lik_1) + 2*log(length(standata$y))
+-2*min(rowSums(log_lik_1)) + 2*log(length(standata$y))
 r_eff <- relative_eff(exp(log_lik_1)) 
 loo_1 <- loo(log_lik_1, r_eff = r_eff, cores = 2)
 print(loo_1)
